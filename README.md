@@ -174,7 +174,7 @@ In this mode, image A is the black and white image (lightness only), and image B
 
 You can look at the loss and computation graph using tensorboard:
 ```sh
-tensorboard --logdir=facades_train
+tensorboard --logdir=facades_train --host=127.0.0.1
 ```
 
 <img src="docs/tensorboard-scalar.png" width="250px"/> <img src="docs/tensorboard-image.png" width="250px"/> <img src="docs/tensorboard-graph.png" width="250px"/>
