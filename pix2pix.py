@@ -30,7 +30,7 @@ parser.add_argument("--progress_freq", type=int, default=50, help="display progr
 parser.add_argument("--trace_freq", type=int, default=0, help="trace execution every trace_freq steps")
 parser.add_argument("--display_freq", type=int, default=0,
                     help="write current training images every display_freq steps")
-parser.add_argument("--save_freq", type=int, default=5000, help="save model every save_freq steps, 0 to disable")
+parser.add_argument("--save_freq", type=int, default=500, help="save model every save_freq steps, 0 to disable")
 
 parser.add_argument("--separable_conv", action="store_true", help="use separable convolutions in the generator")
 parser.add_argument("--aspect_ratio", type=float, default=1.0, help="aspect ratio of output images (width/height)")
@@ -129,7 +129,7 @@ def gen_deconv(batch_input, out_channels):
                                           kernel_initializer=initializer)
 
 
-def lrelu(x, a):
+def leaky_relu(x, a):
     with tf.name_scope("lrelu"):
         # adding these together creates the leak part and linear part
         # then cancels them out by subtracting/adding an absolute value term
@@ -141,7 +141,7 @@ def lrelu(x, a):
         return (0.5 * (1 + a)) * x + (0.5 * (1 - a)) * tf.abs(x)
 
 
-def batchnorm(inputs):
+def batch_norm(inputs):
     return tf.layers.batch_normalization(inputs, axis=3, epsilon=1e-5, momentum=0.1, training=True,
                                          gamma_initializer=tf.random_normal_initializer(1.0, 0.02))
 
@@ -366,10 +366,10 @@ def create_generator(generator_inputs, generator_outputs_channels):
 
     for out_channels in layer_specs:
         with tf.variable_scope("encoder_%d" % (len(layers) + 1)):
-            rectified = lrelu(layers[-1], 0.2)
+            rectified = leaky_relu(layers[-1], 0.2)
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
             convolved = gen_conv(rectified, out_channels)
-            output = batchnorm(convolved)
+            output = batch_norm(convolved)
             layers.append(output)
 
     layer_specs = [
@@ -396,7 +396,7 @@ def create_generator(generator_inputs, generator_outputs_channels):
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
             output = gen_deconv(rectified, out_channels)
-            output = batchnorm(output)
+            output = batch_norm(output)
 
             if dropout > 0.0:
                 output = tf.nn.dropout(output, keep_prob=1 - dropout)
@@ -425,7 +425,7 @@ def create_model(inputs, targets):
         # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
         with tf.variable_scope("layer_1"):
             convolved = discrim_conv(d_input, arguments.ndf, stride=2)
-            rectified = lrelu(convolved, 0.2)
+            rectified = leaky_relu(convolved, 0.2)
             layers.append(rectified)
 
         # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
@@ -436,8 +436,8 @@ def create_model(inputs, targets):
                 out_channels = arguments.ndf * min(2 ** (i + 1), 8)
                 stride = 1 if i == n_layers - 1 else 2  # last layer here has stride 1
                 convolved = discrim_conv(layers[-1], out_channels, stride=stride)
-                normalized = batchnorm(convolved)
-                rectified = lrelu(normalized, 0.2)
+                normalized = batch_norm(convolved)
+                rectified = leaky_relu(normalized, 0.2)
                 layers.append(rectified)
 
         # layer_5: [batch, 31, 31, ndf * 8] => [batch, 30, 30, 1]
@@ -465,11 +465,13 @@ def create_model(inputs, targets):
             predict_fake = create_discriminator(inputs, gen_outputs)
 
     with tf.name_scope("discriminator_loss"):
-        # minimizing -tf.log will try to get inputs to 1
+        # minimizing -tf.log will try to get inputs to 1; shape of this method is a parabola -(log(x) + log(1 - x))
         # predict_real => 1
         # predict_fake => 0
         discrim_loss = tf.reduce_mean(-(tf.log(predict_real + EPS) + tf.log(1 - predict_fake + EPS)))
 
+    # losses
+    # G attempts minimizes the second component (plus L1 loss) while D attempts to maximize the loss
     with tf.name_scope("generator_loss"):
         # predict_fake => 1
         # abs(targets - outputs) => 0
@@ -649,11 +651,7 @@ def main():
         return
 
     # load training data
-    # examples = load_examples()
-    # print("examples count = %d" % examples.count)
-
     # inputs and targets are [batch_size, height, width, channels]
-    # todo: make this a parameter
     source_placeholder = tf.placeholder(tf.float32, (None, 256, 256, 3), "x_source")
     target_placeholder = tf.placeholder(tf.float32, (None, 256, 256, 3), "y_target")
 
@@ -677,7 +675,6 @@ def main():
     #     else:
     #         raise Exception("invalid direction")
     # else:
-    # todo: clean this post-processing and summary of input/target images
     # inputs = de_process(examples.inputs)
     # targets = de_process(examples.targets)
     outputs = de_process(model.outputs)
@@ -702,19 +699,10 @@ def main():
 
     with tf.name_scope("encode_images"):
         display_fetches = {
-            # "paths": examples.paths,
-            # "inputs": tf.map_fn(tf.image.encode_png, converted_inputs, dtype=tf.string, name="input_pngs"),
-            # "targets": tf.map_fn(tf.image.encode_png, converted_targets, dtype=tf.string, name="target_pngs"),
             "outputs": tf.map_fn(tf.image.encode_png, converted_outputs, dtype=tf.string, name="output_pngs"),
         }
 
     # summaries
-    # with tf.name_scope("inputs_summary"):
-    #     tf.summary.image("inputs", converted_inputs)
-    #
-    # with tf.name_scope("targets_summary"):
-    #     tf.summary.image("targets", converted_targets)
-
     with tf.name_scope("outputs_summary"):
         tf.summary.image("outputs", converted_outputs)
 
@@ -774,7 +762,7 @@ def main():
                 for i, f in enumerate(filesets):
                     print("evaluated image", f["name"])
                 index_path = append_index(filesets)
-            print("wrote index at", index_path)
+                print("wrote index at", index_path)
             print("rate", (time.time() - start) / max_steps)
         else:
             # training
@@ -806,12 +794,9 @@ def main():
                 if should(arguments.display_freq):
                     fetches["display"] = display_fetches
 
-                # todo: read batch_size training data with all the pre-processing
                 x_source, y_target = du.generate_batch(images_filename_list, arguments)
 
-                results = sess.run(fetches,
-                                   options=options,
-                                   run_metadata=run_metadata,
+                results = sess.run(fetches, options=options, run_metadata=run_metadata,
                                    feed_dict={source_placeholder: x_source, target_placeholder: y_target})
 
                 if should(arguments.summary_freq):
