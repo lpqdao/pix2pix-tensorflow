@@ -13,6 +13,8 @@ import collections
 import math
 import time
 
+import data_util as du
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_dir", help="path to folder containing images")
 parser.add_argument("--mode", required=True, choices=["train", "test", "export"])
@@ -60,19 +62,19 @@ Model = collections.namedtuple("Model",
                                "discrim_grads_and_vars, gen_loss_GAN, gen_loss_L1, gen_grads_and_vars, train")
 
 
-def preprocess(image):
+def pre_process(image):
     with tf.name_scope("preprocess"):
         # [0, 1] => [-1, 1]
         return image * 2 - 1
 
 
-def deprocess(image):
+def de_process(image):
     with tf.name_scope("deprocess"):
         # [-1, 1] => [0, 1]
         return (image + 1) / 2
 
 
-def preprocess_lab(lab):
+def pre_process_lab(lab):
     with tf.name_scope("preprocess_lab"):
         L_chan, a_chan, b_chan = tf.unstack(lab, axis=2)
         # L_chan: black and white with input range [0, 100]
@@ -81,7 +83,7 @@ def preprocess_lab(lab):
         return [L_chan / 50 - 1, a_chan / 110, b_chan / 110]
 
 
-def deprocess_lab(L_chan, a_chan, b_chan):
+def de_process_lab(L_chan, a_chan, b_chan):
     with tf.name_scope("deprocess_lab"):
         # this is axis=3 instead of axis=2 because we process individual images but deprocess batches
         return tf.stack([(L_chan + 1) / 2 * 100, a_chan * 110, b_chan * 110], axis=3)
@@ -91,7 +93,7 @@ def augment(image, brightness):
     # (arguments, b) color channels, combine with L channel and convert to rgb
     a_chan, b_chan = tf.unstack(image, axis=3)
     L_chan = tf.squeeze(brightness, axis=3)
-    lab = deprocess_lab(L_chan, a_chan, b_chan)
+    lab = de_process_lab(L_chan, a_chan, b_chan)
     rgb = lab_to_rgb(lab)
     return rgb
 
@@ -248,6 +250,7 @@ def lab_to_rgb(lab):
 
 
 def load_examples():
+    # note~ this is known as the input pipeline
     if arguments.input_dir is None or not os.path.exists(arguments.input_dir):
         raise Exception("input_dir does not exist")
 
@@ -287,14 +290,14 @@ def load_examples():
         if arguments.lab_colorization:
             # load color and brightness from image, no B image exists here
             lab = rgb_to_lab(raw_input)
-            L_chan, a_chan, b_chan = preprocess_lab(lab)
+            L_chan, a_chan, b_chan = pre_process_lab(lab)
             a_images = tf.expand_dims(L_chan, axis=2)
             b_images = tf.stack([a_chan, b_chan], axis=2)
         else:
             # break apart image pair and move to range [-1, 1]
             width = tf.shape(raw_input)[1]  # [height, width, channels]
-            a_images = preprocess(raw_input[:, :width // 2, :])
-            b_images = preprocess(raw_input[:, width // 2:, :])
+            a_images = pre_process(raw_input[:, :width // 2, :])
+            b_images = pre_process(raw_input[:, width // 2:, :])
 
     if arguments.which_direction == "AtoB":
         inputs, targets = [a_images, b_images]
@@ -417,11 +420,11 @@ def create_model(inputs, targets):
         layers = []
 
         # 2x [batch, height, width, in_channels] => [batch, height, width, in_channels * 2]
-        input = tf.concat([discrim_inputs, discrim_targets], axis=3)
+        d_input = tf.concat([discrim_inputs, discrim_targets], axis=3)
 
         # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
         with tf.variable_scope("layer_1"):
-            convolved = discrim_conv(input, arguments.ndf, stride=2)
+            convolved = discrim_conv(d_input, arguments.ndf, stride=2)
             rectified = lrelu(convolved, 0.2)
             layers.append(rectified)
 
@@ -605,7 +608,7 @@ def main():
         batch_input = tf.expand_dims(input_image, axis=0)
 
         with tf.variable_scope("generator"):
-            batch_output = deprocess(create_generator(preprocess(batch_input), 3))
+            batch_output = de_process(create_generator(pre_process(batch_input), 3))
 
         output_image = tf.image.convert_image_dtype(batch_output, dtype=tf.uint8)[0]
         if arguments.output_filetype == "png":
@@ -646,33 +649,38 @@ def main():
         return
 
     # load training data
-    examples = load_examples()
-    print("examples count = %d" % examples.count)
+    # examples = load_examples()
+    # print("examples count = %d" % examples.count)
 
     # inputs and targets are [batch_size, height, width, channels]
-    model = create_model(examples.inputs, examples.targets)
+    # todo: make this a parameter
+    source_placeholder = tf.placeholder(tf.float32, (None, 256, 256, 3), "x_source")
+    target_placeholder = tf.placeholder(tf.float32, (None, 256, 256, 3), "y_target")
+
+    model = create_model(source_placeholder, target_placeholder)
 
     # undo colorization splitting on images that we use for display/output
-    if arguments.lab_colorization:
-        if arguments.which_direction == "AtoB":
-            # inputs is brightness, this will be handled fine as arguments grayscale image
-            # need to augment targets and outputs with brightness
-            targets = augment(examples.targets, examples.inputs)
-            outputs = augment(model.outputs, examples.inputs)
-            # inputs can be deprocessed normally and handled as if they are single channel
-            # grayscale images
-            inputs = deprocess(examples.inputs)
-        elif arguments.which_direction == "BtoA":
-            # inputs will be color channels only, get brightness from targets
-            inputs = augment(examples.inputs, examples.targets)
-            targets = deprocess(examples.targets)
-            outputs = deprocess(model.outputs)
-        else:
-            raise Exception("invalid direction")
-    else:
-        inputs = deprocess(examples.inputs)
-        targets = deprocess(examples.targets)
-        outputs = deprocess(model.outputs)
+    # if arguments.lab_colorization:
+    #     if arguments.which_direction == "AtoB":
+    #         # inputs is brightness, this will be handled fine as arguments grayscale image
+    #         # need to augment targets and outputs with brightness
+    #         targets = augment(examples.targets, examples.inputs)
+    #         outputs = augment(model.outputs, examples.inputs)
+    #         # inputs can be deprocessed normally and handled as if they are single channel
+    #         # grayscale images
+    #         inputs = de_process(examples.inputs)
+    #     elif arguments.which_direction == "BtoA":
+    #         # inputs will be color channels only, get brightness from targets
+    #         inputs = augment(examples.inputs, examples.targets)
+    #         targets = de_process(examples.targets)
+    #         outputs = de_process(model.outputs)
+    #     else:
+    #         raise Exception("invalid direction")
+    # else:
+    # todo: clean this post-processing and summary of input/target images
+    # inputs = de_process(examples.inputs)
+    # targets = de_process(examples.targets)
+    outputs = de_process(model.outputs)
 
     def convert(image):
         if arguments.aspect_ratio != 1.0:
@@ -683,29 +691,29 @@ def main():
         return tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
 
     # reverse any processing on images so they can be written to disk or displayed to user
-    with tf.name_scope("convert_inputs"):
-        converted_inputs = convert(inputs)
-
-    with tf.name_scope("convert_targets"):
-        converted_targets = convert(targets)
+    # with tf.name_scope("convert_inputs"):
+    #     converted_inputs = convert(inputs)
+    #
+    # with tf.name_scope("convert_targets"):
+    #     converted_targets = convert(targets)
 
     with tf.name_scope("convert_outputs"):
         converted_outputs = convert(outputs)
 
     with tf.name_scope("encode_images"):
         display_fetches = {
-            "paths": examples.paths,
-            "inputs": tf.map_fn(tf.image.encode_png, converted_inputs, dtype=tf.string, name="input_pngs"),
-            "targets": tf.map_fn(tf.image.encode_png, converted_targets, dtype=tf.string, name="target_pngs"),
+            # "paths": examples.paths,
+            # "inputs": tf.map_fn(tf.image.encode_png, converted_inputs, dtype=tf.string, name="input_pngs"),
+            # "targets": tf.map_fn(tf.image.encode_png, converted_targets, dtype=tf.string, name="target_pngs"),
             "outputs": tf.map_fn(tf.image.encode_png, converted_outputs, dtype=tf.string, name="output_pngs"),
         }
 
     # summaries
-    with tf.name_scope("inputs_summary"):
-        tf.summary.image("inputs", converted_inputs)
-
-    with tf.name_scope("targets_summary"):
-        tf.summary.image("targets", converted_targets)
+    # with tf.name_scope("inputs_summary"):
+    #     tf.summary.image("inputs", converted_inputs)
+    #
+    # with tf.name_scope("targets_summary"):
+    #     tf.summary.image("targets", converted_targets)
 
     with tf.name_scope("outputs_summary"):
         tf.summary.image("outputs", converted_outputs)
@@ -732,11 +740,17 @@ def main():
     saver = tf.train.Saver(max_to_keep=1)
 
     log_dir = arguments.output_dir if (arguments.trace_freq > 0 or arguments.summary_freq > 0) else None
+    # todo: Supervisor is deprecated, use MonitoredTrainingSession
     sv = tf.train.Supervisor(logdir=log_dir, save_summaries_secs=0, saver=None)
 
     # training loop
     with sv.managed_session() as sess:
+
+        images_filename_list = du.get_data_files_list(arguments.input_dir, "jpg")
+        steps_per_epoch = int(math.ceil(len(images_filename_list) / arguments.batch_size))
+
         print("parameter_count =", sess.run(parameter_count))
+        print(f"Data count = {len(images_filename_list)}")
 
         if arguments.checkpoint is not None:
             print("loading model from checkpoint")
@@ -745,7 +759,7 @@ def main():
 
         max_steps = 2 ** 32
         if arguments.max_epochs is not None:
-            max_steps = examples.steps_per_epoch * arguments.max_epochs
+            max_steps = steps_per_epoch * arguments.max_epochs
         if arguments.max_steps is not None:
             max_steps = arguments.max_steps
 
@@ -753,7 +767,7 @@ def main():
             # testing
             # at most, process the test data once
             start = time.time()
-            max_steps = min(examples.steps_per_epoch, max_steps)
+            max_steps = min(steps_per_epoch, max_steps)
             for step in range(max_steps):
                 results = sess.run(display_fetches)
                 filesets = save_images(results)
@@ -792,7 +806,13 @@ def main():
                 if should(arguments.display_freq):
                     fetches["display"] = display_fetches
 
-                results = sess.run(fetches, options=options, run_metadata=run_metadata)
+                # todo: read batch_size training data with all the pre-processing
+                x_source, y_target = du.generate_batch(images_filename_list, arguments)
+
+                results = sess.run(fetches,
+                                   options=options,
+                                   run_metadata=run_metadata,
+                                   feed_dict={source_placeholder: x_source, target_placeholder: y_target})
 
                 if should(arguments.summary_freq):
                     print("recording summary")
@@ -809,8 +829,8 @@ def main():
 
                 if should(arguments.progress_freq):
                     # global_step will have the correct step count if we resume from arguments checkpoint
-                    train_epoch = math.ceil(results["global_step"] / examples.steps_per_epoch)
-                    train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
+                    train_epoch = math.ceil(results["global_step"] / steps_per_epoch)
+                    train_step = (results["global_step"] - 1) % steps_per_epoch + 1
                     rate = (step + 1) * arguments.batch_size / (time.time() - start)
                     remaining = (max_steps - step) * arguments.batch_size / rate
                     print("progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (
