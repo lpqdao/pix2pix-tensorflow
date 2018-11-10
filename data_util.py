@@ -68,6 +68,8 @@ def read_input_data(filename, arguments):
 
     cv_image = cv_image.astype("float32")
 
+    cv_image /= 255.0
+
     # shape [height, width, channels]
     width = cv_image.shape[1]
     image_a = pre_process(cv_image[:, :width // 2, :])
