@@ -517,6 +517,7 @@ def save_images(fetches, step=None):
         os.makedirs(image_dir)
 
     filesets = []
+    # note~ I changed this...this is broken and so is display_freq
     for i, in_path in enumerate(fetches["paths"]):
         name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
         fileset = {"name": name, "step": step}
@@ -804,6 +805,7 @@ def main():
                     sv.summary_writer.add_summary(results["summary"], results["global_step"])
 
                 if should(arguments.display_freq):
+                    # todo: broken, need to fix
                     print("saving display images")
                     filesets = save_images(results["display"], step=results["global_step"])
                     append_index(filesets, step=True)
