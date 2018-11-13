@@ -62,11 +62,11 @@ def read_input_data(filename, arguments):
     """
 
     cv_image = cv2.imread(filename)
-    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
 
     if cv_image is None:
         raise RuntimeError(f"Unable to open {filename}")
 
+    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
     cv_image = cv_image.astype("float32")
 
     cv_image /= 255.0
