@@ -79,10 +79,10 @@ def read_input_data(filename, arguments):
     def transform(image):
         r = image
 
-        if arguments.flip:
-            result = random.randint(0, 1)
-            if result:
-                r = cv2.flip(r, 0)
+        # if arguments.flip:
+        #     result = random.randint(0, 1)
+        #     if result:
+        #         r = cv2.flip(r, 0)
 
         r = cv2.resize(r, (arguments.scale_size, arguments.scale_size), interpolation=cv2.INTER_AREA)
 
