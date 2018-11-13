@@ -62,6 +62,7 @@ def read_input_data(filename, arguments):
     """
 
     cv_image = cv2.imread(filename)
+    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
 
     if cv_image is None:
         raise RuntimeError(f"Unable to open {filename}")
