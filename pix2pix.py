@@ -88,28 +88,50 @@ def save_images(fetches, step=None):
     return filesets
 
 
-def append_index(filesets, step=False):
+def save_image(input_file_name, fetches):
+    image_dir = os.path.join(arguments.output_dir, "images")
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
+
+    name, _ = os.path.splitext(os.path.basename(input_file_name))
+
+    output_fileset = {"name": name, "step": None}
+
+    filename = name + "-" + "outputs" + ".png"
+    output_fileset["outputs"] = filename
+
+    out_path = os.path.join(image_dir, filename)
+    contents = fetches["outputs"][0]
+    with open(out_path, "wb") as f:
+        f.write(contents)
+
+    output_fileset["inputs"] = input_file_name
+
+    return output_fileset
+
+
+def append_index(fileset, step=False):
     index_path = os.path.join(arguments.output_dir, "index.html")
     if os.path.exists(index_path):
-        index = open(index_path, "arguments")
+        index = open(index_path, "a")
     else:
         index = open(index_path, "w")
         index.write("<html><body><table><tr>")
         if step:
             index.write("<th>step</th>")
-        index.write("<th>name</th><th>input</th><th>output</th><th>target</th></tr>")
+        index.write("<th>name</th><th>output</th><th>input</th></tr>")
 
-    for fileset in filesets:
-        index.write("<tr>")
+    index.write("<tr>")
 
-        if step:
-            index.write("<td>%d</td>" % fileset["step"])
-        index.write("<td>%s</td>" % fileset["name"])
+    if step:
+        index.write("<td>%d</td>" % fileset["step"])
 
-        for kind in ["inputs", "outputs", "targets"]:
-            index.write("<td><img src='images/%s'></td>" % fileset[kind])
+    index.write("<td>%s</td>" % fileset["name"])
 
-        index.write("</tr>")
+    index.write("<td><img src='images/%s'></td>" % fileset["outputs"])
+    index.write("<td><img src='../%s'></td>" % fileset["inputs"])
+
+    index.write("</tr>")
     return index_path
 
 
@@ -282,17 +304,21 @@ def main():
 
         if arguments.mode == "test":
             # testing
-            # at most, process the test data once
             start = time.time()
-            max_steps = min(steps_per_epoch, max_steps)
-            for step in range(max_steps):
-                results = sess.run(display_fetches)
-                filesets = save_images(results)
-                for i, f in enumerate(filesets):
-                    print("evaluated image", f["name"])
-                index_path = append_index(filesets)
+            for test_file in images_filename_list:
+                x_source, y_target = du.read_single_data_file(test_file, arguments)
+
+                results = sess.run(display_fetches,
+                                   feed_dict={source_placeholder: np.expand_dims(x_source, 0),
+                                              target_placeholder: np.expand_dims(y_target, 0)})
+
+                fileset = save_image(test_file, results)
+                print("evaluated image", fileset["name"])
+                index_path = append_index(fileset)
+
                 print("wrote index at", index_path)
-            print("rate", (time.time() - start) / max_steps)
+
+            print(f"time: {(time.time() - start)}")
         else:
             # training
             start = time.time()

@@ -266,6 +266,17 @@ def generate_batch(data_files_list, arguments):
         raise Exception("invalid direction")
 
 
+def read_single_data_file(data_file_name, arguments):
+    raw_img, sketch_img = read_input_data(data_file_name, arguments)
+
+    if arguments.which_direction == "AtoB":
+        return raw_img, sketch_img
+    elif arguments.which_direction == "BtoA":
+        return sketch_img, raw_img
+    else:
+        raise Exception("invalid direction")
+
+
 def read_input_data(filename, arguments):
     """
     Reads single input data
@@ -315,6 +326,3 @@ def read_input_data(filename, arguments):
 def pre_process(image):
     # [0, 1] => [-1, 1]
     return image * 2 - 1
-
-# data_files = get_data_files_list("tools/facades/train", "jpg")
-# generate_batch(data_files, {"batch_size": 1, "scale_size": 286, "flip": True})
