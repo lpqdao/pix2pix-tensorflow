@@ -112,6 +112,8 @@ python tools/process.py \
 python tools/split.py \
   --dir photos/combined
 ```
+```#To put all color files in folder:
+find . -name '*_colors.png' -exec cp -prv '{}' 'bathroom_color/' ';'```
 
 The folder `photos/combined` will now have `train` and `val` subfolders that you can use for training and testing.
 
